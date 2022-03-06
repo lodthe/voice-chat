@@ -65,7 +65,9 @@ func main() {
 	go func() {
 		err := connection.Start()
 		if errors.Is(err, io.EOF) {
+			fmt.Println("\n\n\nServer is shutting down...")
 			stop()
+
 			return
 		}
 		if err != nil {
