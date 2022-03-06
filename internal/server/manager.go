@@ -35,11 +35,7 @@ func NewManager(ctx context.Context) *Manager {
 func (m *Manager) HandleConn(conn net.Conn) {
 	defer conn.Close()
 
-	c := &Client{
-		conn:    conn,
-		id:      uuid.New(),
-		address: conn.RemoteAddr().String(),
-	}
+	c := NewClient(conn)
 
 	err := m.addClient(c)
 	if err != nil {
@@ -54,7 +50,7 @@ func (m *Manager) HandleConn(conn net.Conn) {
 		select {
 		case <-m.ctx.Done():
 			log.Printf("disconnect %s\n", c)
-			break
+			return
 
 		default:
 		}
@@ -103,8 +99,10 @@ func (m *Manager) handleMessage(c *Client, msg *vprotocol.Message) error {
 }
 
 func (m *Manager) handleJoin(c *Client, payload *vprotocol.PayloadJoin) error {
-	oldRoom := c.Room()
-	if oldRoom != nil && strings.EqualFold(*oldRoom, payload.Room) {
+	payload.Room = strings.ToLower(payload.Room)
+
+	oldDescr := c.Description()
+	if oldDescr.Room != nil && strings.EqualFold(*oldDescr.Room, payload.Room) {
 		return nil
 	}
 
@@ -113,8 +111,10 @@ func (m *Manager) handleJoin(c *Client, payload *vprotocol.PayloadJoin) error {
 		return errors.Wrap(err, "failed to leave")
 	}
 
-	c.SetRoom(&payload.Room)
-	c.SetName(payload.Name)
+	c.SetDescription(ClientDescription{
+		Room: &payload.Room,
+		Name: payload.Name,
+	})
 
 	log.Printf("%s joined #%s as %s\n", c, payload.Room, payload.Name)
 
@@ -134,20 +134,23 @@ func (m *Manager) handleJoin(c *Client, payload *vprotocol.PayloadJoin) error {
 }
 
 func (m *Manager) handleLeave(c *Client, _ *vprotocol.PayloadLeave) error {
-	room := c.Room()
-	if room == nil {
+	descr := c.Description()
+	if descr.Room == nil {
 		return nil
 	}
 
-	c.SetRoom(nil)
+	c.SetDescription(ClientDescription{
+		Room: nil,
+		Name: descr.Name,
+	})
 
-	log.Printf("%s left #%s as %s\n", c, *room, c.Name())
+	log.Printf("%s left #%s as %s\n", c, *descr.Room, descr.Name)
 
 	msg := vprotocol.Message{
 		Type: vprotocol.TypeLeave,
 		Payload: &vprotocol.PayloadLeave{
-			Room: *room,
-			Name: c.Name(),
+			Room: *descr.Room,
+			Name: descr.Name,
 		},
 	}
 
@@ -159,8 +162,8 @@ func (m *Manager) handleLeave(c *Client, _ *vprotocol.PayloadLeave) error {
 }
 
 func (m *Manager) handleAudio(c *Client, payload *vprotocol.PayloadAudio) error {
-	room := c.Room()
-	if room == nil {
+	descr := c.Description()
+	if descr.Room == nil {
 		return nil
 	}
 
@@ -170,8 +173,8 @@ func (m *Manager) handleAudio(c *Client, payload *vprotocol.PayloadAudio) error 
 	}
 
 	m.forward(&msg, func(peer *Client) bool {
-		peerRoom := peer.Room()
-		return peerRoom != nil && *peerRoom == *room && peer.ID() != c.ID()
+		d := peer.Description()
+		return d.Room != nil && *d.Room == *descr.Room && peer.ID() != c.ID()
 	})
 
 	return nil

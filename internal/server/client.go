@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -9,15 +8,27 @@ import (
 	"github.com/google/uuid"
 )
 
+type ClientDescription struct {
+	Room *string
+	Name string
+}
+
 type Client struct {
-	ctx  context.Context
 	conn net.Conn
-	mu   sync.RWMutex
 
 	id      uuid.UUID
 	address string
-	room    *string
-	name    string
+
+	description       ClientDescription
+	descriptionLocker sync.RWMutex
+}
+
+func NewClient(conn net.Conn) *Client {
+	return &Client{
+		conn:    conn,
+		id:      uuid.New(),
+		address: conn.RemoteAddr().String(),
+	}
 }
 
 func (c *Client) String() string {
@@ -28,30 +39,16 @@ func (c *Client) ID() uuid.UUID {
 	return c.id
 }
 
-func (c *Client) Room() *string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+func (c *Client) Description() ClientDescription {
+	c.descriptionLocker.RLock()
+	defer c.descriptionLocker.RUnlock()
 
-	return c.room
+	return c.description
 }
 
-func (c *Client) SetRoom(newRoom *string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *Client) SetDescription(d ClientDescription) {
+	c.descriptionLocker.Lock()
+	defer c.descriptionLocker.Unlock()
 
-	c.room = newRoom
-}
-
-func (c *Client) Name() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return c.name
-}
-
-func (c *Client) SetName(newName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.name = newName
+	c.description = d
 }
