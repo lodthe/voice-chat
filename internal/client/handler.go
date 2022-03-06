@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/lodthe/voice-chat/pkg/vprotocol"
 )
@@ -21,6 +22,8 @@ type Handler struct {
 
 	audioInput  <-chan []byte
 	audioOutput chan<- []byte
+
+	muted int32
 }
 
 func NewHandler(
@@ -66,6 +69,9 @@ func (h *Handler) handleUserInput() {
 		}
 
 		switch {
+		case strings.HasPrefix(input, "help"):
+			h.sendHelpCommand()
+
 		case strings.HasPrefix(input, "join"):
 			h.handleInputJoin(input)
 
@@ -74,6 +80,12 @@ func (h *Handler) handleUserInput() {
 
 		case strings.HasPrefix(input, "info"):
 			h.handleInputInfo(input)
+
+		case strings.HasPrefix(input, "mute"):
+			h.handleInputMute(input)
+
+		case strings.HasPrefix(input, "unmute"):
+			h.handleInputUnmute(input)
 
 		default:
 			h.sendError("Invalid command, please see help.")
@@ -108,6 +120,16 @@ func (h *Handler) handleInputInfo(_ string) {
 		Type:    vprotocol.TypeGetInfoRequest,
 		Payload: &vprotocol.PayloadGetInfoRequest{},
 	}
+}
+
+func (h *Handler) handleInputMute(_ string) {
+	atomic.StoreInt32(&h.muted, 1)
+	h.sendWithPrompt("Muted.")
+}
+
+func (h *Handler) handleInputUnmute(_ string) {
+	atomic.StoreInt32(&h.muted, 0)
+	h.sendWithPrompt("Unmuted!")
 }
 
 func (h *Handler) handleIngoingMessages() {
@@ -201,6 +223,10 @@ func (h *Handler) handleIngoingAudio() {
 		case frame = <-h.audioInput:
 		}
 
+		if atomic.LoadInt32(&h.muted) == 1 {
+			continue
+		}
+
 		h.msgOutput <- &vprotocol.Message{
 			Type: vprotocol.TypeAudio,
 			Payload: &vprotocol.PayloadAudio{
@@ -221,6 +247,10 @@ Command list:
 > leave - disconnect from the voice room.
 
 > info - list connected clients.
+
+> mute - mute yourself.
+
+> unmute - unmute yourself.
 ===========`)
 }
 
@@ -229,5 +259,13 @@ func (h *Handler) sendError(text string) {
 }
 
 func (h *Handler) sendWithPrompt(text string) {
-	h.userOutput <- "\n\n" + text + "\n\nSend me something: "
+	msg := "\n\n" + text + "\n\n"
+
+	if atomic.LoadInt32(&h.muted) == 1 {
+		msg += "<MUTED> "
+	}
+
+	msg += "Send me something: "
+
+	h.userOutput <- msg
 }
