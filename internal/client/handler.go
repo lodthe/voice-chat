@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/lodthe/voice-chat/pkg/vprotocol"
@@ -71,6 +72,9 @@ func (h *Handler) handleUserInput() {
 		case strings.HasPrefix(input, "leave"):
 			h.handleInputLeave(input)
 
+		case strings.HasPrefix(input, "info"):
+			h.handleInputInfo(input)
+
 		default:
 			h.sendError("Invalid command, please see help.")
 		}
@@ -99,6 +103,13 @@ func (h *Handler) handleInputLeave(_ string) {
 	}
 }
 
+func (h *Handler) handleInputInfo(_ string) {
+	h.msgOutput <- &vprotocol.Message{
+		Type:    vprotocol.TypeGetInfoRequest,
+		Payload: &vprotocol.PayloadGetInfoRequest{},
+	}
+}
+
 func (h *Handler) handleIngoingMessages() {
 	for {
 		var msg *vprotocol.Message
@@ -118,6 +129,12 @@ func (h *Handler) handleIngoingMessages() {
 
 		case vprotocol.TypeAudio:
 			h.handleMessageAudio(msg.Payload.(*vprotocol.PayloadAudio))
+
+		case vprotocol.TypeTextResponse:
+			h.handleMessageTextResponse(msg.Payload.(*vprotocol.PayloadTextResponse))
+
+		case vprotocol.TypeGetInfoResponse:
+			h.handleMessageGetInfoResponse(msg.Payload.(*vprotocol.PayloadGetInfoResponse))
 		}
 	}
 }
@@ -132,6 +149,46 @@ func (h *Handler) handleMessageLeave(payload *vprotocol.PayloadLeave) {
 
 func (h *Handler) handleMessageAudio(payload *vprotocol.PayloadAudio) {
 	h.audioOutput <- payload.Data
+}
+
+func (h *Handler) handleMessageTextResponse(payload *vprotocol.PayloadTextResponse) {
+	h.sendWithPrompt("[RESPONSE]: " + payload.Message)
+}
+
+func (h *Handler) handleMessageGetInfoResponse(payload *vprotocol.PayloadGetInfoResponse) {
+	rooms := make(map[string][]vprotocol.ClientDescription)
+	var roomNames []string
+	for _, cli := range payload.ConnectedClients {
+		_, exists := rooms[cli.Room]
+		if !exists {
+			roomNames = append(roomNames, cli.Room)
+		}
+
+		rooms[cli.Room] = append(rooms[cli.Room], cli)
+	}
+
+	sort.Strings(roomNames)
+
+	info := "Information about connected clients:\n"
+
+	for _, room := range roomNames {
+		info += fmt.Sprintf("\n[#%s]\n", room)
+
+		clients := rooms[room]
+		sort.Slice(clients, func(i, j int) bool {
+			return clients[i].ID.String() < clients[j].ID.String()
+		})
+
+		for _, client := range clients {
+			info += fmt.Sprintf("  - %s [%s]\n", client.Name, client.ID.String()[:6])
+		}
+	}
+
+	if len(roomNames) == 0 {
+		info += "There are no connected clients :("
+	}
+
+	h.sendWithPrompt(info)
 }
 
 func (h *Handler) handleIngoingAudio() {
@@ -162,6 +219,8 @@ Command list:
 > join [room] [name] - join a voice room with the specified name (no spaces allowed).
 
 > leave - disconnect from the voice room.
+
+> info - list connected clients.
 ===========`)
 }
 

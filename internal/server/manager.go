@@ -87,6 +87,9 @@ func (m *Manager) handleMessage(c *Client, msg *vprotocol.Message) error {
 	case vprotocol.TypeAudio:
 		err = m.handleAudio(c, p.(*vprotocol.PayloadAudio))
 
+	case vprotocol.TypeGetInfoRequest:
+		err = m.handleGetInfoRequest(c, p.(*vprotocol.PayloadGetInfoRequest))
+
 	default:
 		return fmt.Errorf("unknown message type %v", msg.Type)
 	}
@@ -99,6 +102,28 @@ func (m *Manager) handleMessage(c *Client, msg *vprotocol.Message) error {
 }
 
 func (m *Manager) handleJoin(c *Client, payload *vprotocol.PayloadJoin) error {
+	if payload.Room == "" {
+		m.sendMessage(c.ID(), &vprotocol.Message{
+			Type: vprotocol.TypeTextResponse,
+			Payload: &vprotocol.PayloadTextResponse{
+				Message: "room cannot be empty",
+			},
+		})
+
+		return nil
+	}
+
+	if payload.Name == "" {
+		m.sendMessage(c.ID(), &vprotocol.Message{
+			Type: vprotocol.TypeTextResponse,
+			Payload: &vprotocol.PayloadTextResponse{
+				Message: "name cannot be empty",
+			},
+		})
+
+		return nil
+	}
+
 	payload.Room = strings.ToLower(payload.Room)
 
 	oldDescr := c.Description()
@@ -180,12 +205,61 @@ func (m *Manager) handleAudio(c *Client, payload *vprotocol.PayloadAudio) error 
 	return nil
 }
 
-func (m *Manager) forward(msg *vprotocol.Message, ok func(c *Client) bool) {
+func (m *Manager) handleGetInfoRequest(c *Client, _ *vprotocol.PayloadGetInfoRequest) error {
+	msg := vprotocol.Message{
+		Type: vprotocol.TypeGetInfoResponse,
+		Payload: &vprotocol.PayloadGetInfoResponse{
+			ConnectedClients: m.connectedClients(),
+		},
+	}
+
+	m.sendMessage(c.ID(), &msg)
+
+	return nil
+}
+
+func (m *Manager) connectedClients() []vprotocol.ClientDescription {
+	m.clientsLocker.RLock()
+	defer m.clientsLocker.RUnlock()
+
+	clients := make([]vprotocol.ClientDescription, 0, len(m.clients))
+	for id, cli := range m.clients {
+		d := cli.Description()
+		if d.Room == nil {
+			continue
+		}
+
+		clients = append(clients, vprotocol.ClientDescription{
+			ID:   id,
+			Room: *d.Room,
+			Name: d.Name,
+		})
+	}
+
+	return clients
+}
+
+func (m *Manager) sendMessage(id uuid.UUID, msg *vprotocol.Message) {
+	m.clientsLocker.RLock()
+	defer m.clientsLocker.RUnlock()
+
+	cli, found := m.clients[id]
+	if !found {
+		return
+	}
+
+	err := msg.Marshal(cli.conn)
+	if err != nil {
+		log.Printf("failed to send message to %s: %v\n", cli, err)
+	}
+}
+
+func (m *Manager) forward(msg *vprotocol.Message, clientFits func(c *Client) bool) {
 	m.clientsLocker.RLock()
 	defer m.clientsLocker.RUnlock()
 
 	for _, client := range m.clients {
-		if ok(client) {
+		if clientFits(client) {
 			err := msg.Marshal(client.conn)
 			if err != nil {
 				log.Printf("failed to send message to %s: %v\n", client, err)

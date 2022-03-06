@@ -16,6 +16,9 @@ const (
 	TypeJoin
 	TypeLeave
 	TypeAudio
+	TypeTextResponse
+	TypeGetInfoRequest
+	TypeGetInfoResponse
 )
 
 type Payload interface{}
@@ -40,6 +43,15 @@ func (m *Message) Unmarshal(r io.Reader) error {
 
 	case TypeAudio:
 		m.Payload = new(PayloadAudio)
+
+	case TypeTextResponse:
+		m.Payload = new(PayloadTextResponse)
+
+	case TypeGetInfoRequest:
+		m.Payload = new(PayloadGetInfoRequest)
+
+	case TypeGetInfoResponse:
+		m.Payload = new(PayloadGetInfoResponse)
 
 	default:
 		return fmt.Errorf("unknown message type %d", m.Type)
